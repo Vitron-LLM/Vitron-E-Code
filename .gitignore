@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+.env
+
+/ckpts/
+/outputs/
+/wandb/
+
+/third_party/VIST3A/

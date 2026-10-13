@@ -1,0 +1,57 @@
+# Example data config for multi-task fine-tuning, with the batch settings and
+# task mix of our run. Copy it, set the paths and pass the copy to the trainer
+# (--data_config, or DATA_CONFIG for scripts/train/multitask.sh). The config of
+# geometry post-training is data.geo.example.yaml.
+#
+# Datasets are grouped by modality: image (tasks i2i, ti_i2i), video (v2v,
+# tiv2v) and 3d (3d23d). The options above `datasets` are defaults for the
+# datasets of the group; a dataset may set its own value. One dataset is
+# sampled per optimizer update with probability prob / (sum of all prob) and
+# run for gradient_accumulation_steps batches of batch_size samples per GPU.
+# The storage forms behind `path` are described in the README ("2. Data").
+
+image:
+  batch_size: 10                     # per GPU (default: --batch_size)
+  gradient_accumulation_steps: 6     # batches per optimizer update (default: --gradient_accumulation_steps)
+  shuffle_buffer: 150                # decoded samples in the shuffle buffer (default 150)
+  datasets:
+    my_i2i:                          # dataset name, shown in the training logs
+      task: i2i                      # i2i | ti_i2i
+      path: /path/to/my_i2i          # local directory or hf://datasets/<user>/<repo>[/<subdir>]
+      prob: 0.2                      # sampling weight (default 1)
+    my_ti_i2i:
+      task: ti_i2i
+      path: hf://datasets/your-name/your-repo
+      prob: 0.2
+      format: tar                    # auto (default) | jsonl | tar | parquet
+      shards: "data/*.tar"           # glob below path (default: every file of the format)
+      # Field names of this dataset; a dotted value reads a field of the sample's JSON entry.
+      keys: {source: source.jpg, target: edited.jpg, reference: ref.jpg, text: json.text}
+
+video:
+  batch_size: 5
+  gradient_accumulation_steps: 3
+  num_frames: 65                     # frames per clip, 4n+1 (default 65)
+  frame_sampling: random_clip        # random_clip | first | center_clip | uniform (default random_clip)
+  shuffle_buffer: 50                 # (default 50)
+  datasets:
+    my_v2v:
+      task: v2v                      # v2v | tiv2v
+      path: /path/to/my_v2v
+      prob: 0.2
+    my_tiv2v:
+      task: tiv2v
+      path: /path/to/my_tiv2v
+      prob: 0.2
+
+3d:
+  batch_size: 3
+  gradient_accumulation_steps: 5
+  num_views: 26                      # views K per sample (default 26 -> 101 frames)
+  # view_window: 49                  # optional: take the K views from this many consecutive frames
+  datasets:
+    # A public repo whose tar members are named <key>.original.mp4 / <key>.edited.mp4 / <key>.txt.
+    nano3d:
+      path: hf://datasets/yanlinli/Nano3D_rendered_v2/v1_100k/shards
+      prob: 0.2
+      keys: {source: original.mp4, target: edited.mp4, text: txt}

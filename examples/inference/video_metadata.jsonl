@@ -1,0 +1,5 @@
+{"id": "add", "source": "videos/swan.mp4", "text": "Add some pink flowers along the shore."}
+{"id": "remove", "source": "videos/car.mp4", "text": "Remove the car."}
+{"id": "replace", "source": "videos/bear.mp4", "text": "Replace the brown bear with a panda."}
+{"id": "style", "source": "videos/bus.mp4", "text": "Transform the entire scene into Sketch style."}
+{"id": "reference", "source": "videos/bus.mp4", "reference": "references/robot.png", "text": "Add a white robot on the bus."}

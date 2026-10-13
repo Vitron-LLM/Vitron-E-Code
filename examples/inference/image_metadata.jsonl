@@ -1,0 +1,5 @@
+{"id": "add", "source": "images/house.jpg", "text": "include a person walking down the street"}
+{"id": "remove", "source": "images/flowerpot.jpg", "text": "erase the paintbrush on top"}
+{"id": "replace", "source": "images/woman.jpg", "text": "replace the scarf with a hat"}
+{"id": "style", "source": "images/couple.jpg", "text": "Make the style of the image to old fashioned"}
+{"id": "reference", "source": "images/dog.jpg", "reference": "references/dragon.jpg", "text": "change the dog to a [V*]"}

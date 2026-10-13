@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "univedit"
+version = "0.1.0"
+description = "UniVEdit: Unified Visual Editing across Images, Videos, and 3D Scenes"
+readme = "README.md"
+requires-python = ">=3.10"
+license-files = ["License.txt", "Notice.txt"]
+# torch / torchvision are pinned to the CUDA 12.4 build we trained with; install
+# them first from the PyTorch index (see README), then `pip install -e .`.
+dependencies = [
+  "torch==2.6.0",
+  "torchvision==0.21.0",
+  "diffusers==0.32.2",
+  "transformers[accelerate,tiktoken]==4.57.1",
+  "peft==0.17.0",
+  "huggingface-hub==0.34.0",
+  "datasets==3.6.0",
+  "fsspec>=2023.12,<=2025.3.0",
+  "pyyaml>=6.0",
+  "safetensors>=0.5.3",
+  "qwen-vl-utils==0.0.8",
+  "einops==0.8.0",
+  "numpy>=2.2",
+  "pillow",
+  "decord==0.6.0",
+  "imageio==2.37.0",
+  "imageio-ffmpeg==0.6.0",
+  "loguru==0.7.3",
+  "psutil",
+  "wandb>=0.17.0",
+]
+
+[project.optional-dependencies]
+# Fast attention kernels: install the wheel built for your Python, torch and CUDA versions (see README).
+flash = ["flash-attn==2.8.3"]
+# Step caching / quantization at inference (optional).
+cache = ["angelslim==0.2.1"]
+dev = ["ruff>=0.14,<1"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["univedit", "univedit.*", "hyvideo", "hyvideo.*"]
+namespaces = false
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["third_party", "ckpts", "outputs", "src/hyvideo"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

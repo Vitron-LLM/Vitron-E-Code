@@ -1,0 +1,30 @@
+# Extra dependencies for the 3D decoder (VIST3A / AnySplat):
+#   3d23d Gaussian export (--enable_3d_decoder) and geometry post-training.
+# Installed with --no-deps so pip cannot replace the torch build:
+#   pip install --no-deps -r requirements-3d.txt
+#   pip install --no-deps torch_scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
+gsplat==1.4.0
+e3nn==0.6.0
+lightning==2.6.5
+lightning-utilities==0.15.3
+jaxtyping==0.3.7
+wadler-lindig==0.1.7
+dacite==1.9.2
+plyfile==1.1.4
+trimesh==4.12.2
+lpips==0.1.4
+torchmetrics==1.6.0
+colorspacious==1.1.2
+lazy_loader==0.5
+opt_einsum==3.4.0
+opt_einsum_fx==0.1.4
+scikit-image==0.25.2
+scikit-video==1.1.11
+opencv-python-headless==4.13.0.92
+scipy==1.15.3
+matplotlib==3.10.9
+pyparsing==3.3.2
+cycler==0.12.1
+kiwisolver==1.5.0
+omegaconf==2.3.0
+antlr4-python3-runtime==4.9.3

@@ -1,0 +1,140 @@
+diff --git a/third_party_model/anysplat/src/model/encoder/heads/head_modules.py b/third_party_model/anysplat/src/model/encoder/heads/head_modules.py
+index fa84ece..57a6343 100644
+--- a/third_party_model/anysplat/src/model/encoder/heads/head_modules.py
++++ b/third_party_model/anysplat/src/model/encoder/heads/head_modules.py
+@@ -3,10 +3,15 @@ import numbers
+ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+-import xformers.ops as xops
+ from einops import rearrange
+ from torch.nn import functional as F
+ 
++# xformers is optional – fall back to native attention when unavailable.
++try:
++    import xformers.ops as xops  # type: ignore
++except Exception:  # pragma: no cover
++    xops = None
++
+ 
+ class RMSNorm(nn.Module):
+     def __init__(self, dim, eps=1e-6):
+@@ -213,9 +218,10 @@ class SelfAttention(nn.Module):
+         B, N, C = x.shape
+         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
+ 
+-        if self.use_flashatt_v2:
++        if self.use_flashatt_v2 and xops is not None:
++            # Fast path with xformers
+             qkv = qkv.permute(2, 0, 1, 3, 4)
+-            q, k, v = qkv[0], qkv[1], qkv[2]  # (B, N, H, C)
++            q, k, v = qkv[0], qkv[1], qkv[2]  # (B, N, H, D)
+             q, k = self.norm_q(q).to(v.dtype), self.norm_k(k).to(v.dtype)
+             x = xops.memory_efficient_attention(
+                 q,
+@@ -225,6 +231,20 @@ class SelfAttention(nn.Module):
+                 p=self.attn_drop_p,
+             )
+             x = rearrange(x, "b n h d -> b n (h d)")
++        else:
++            # Fallback: standard scaled dot-product attention
++            # q, k, v: (B, H, N, D)
++            qkv = qkv.permute(2, 0, 3, 1, 4)
++            q, k, v = qkv[0], qkv[1], qkv[2]
++            q, k = self.norm_q(q).to(v.dtype), self.norm_k(k).to(v.dtype)
++
++            # (B, H, N, D) @ (B, H, D, N) -> (B, H, N, N)
++            attn = torch.matmul(q * self.scale, k.transpose(-2, -1))
++            attn = torch.softmax(attn, dim=-1)
++            attn = self.attn_drop(attn)
++            # (B, H, N, N) @ (B, H, N, D) -> (B, H, N, D)
++            x = torch.matmul(attn, v)
++            x = x.transpose(1, 2).reshape(B, N, C)
+ 
+         x = self.proj(x)
+         x = self.proj_drop(x)
+@@ -274,7 +294,8 @@ class CrossAttention(nn.Module):
+         k = self.k(x_kv).reshape(B, N_kv, self.num_heads, C // self.num_heads)
+         v = self.v(x_kv).reshape(B, N_kv, self.num_heads, C // self.num_heads)
+ 
+-        if self.use_flashatt_v2:
++        if self.use_flashatt_v2 and xops is not None:
++            # Fast path with xformers
+             q, k = self.norm_q(q).to(v.dtype), self.norm_k(k).to(v.dtype)
+             x = xops.memory_efficient_attention(
+                 q,
+@@ -284,6 +305,21 @@ class CrossAttention(nn.Module):
+                 p=self.attn_drop_p,
+             )
+             x = rearrange(x, "b n h d -> b n (h d)")
++        else:
++            # Fallback: standard scaled dot-product cross-attention
++            # q, k, v: (B, H, N, D)
++            q = q.permute(0, 2, 1, 3)
++            k = k.permute(0, 2, 1, 3)
++            v = v.permute(0, 2, 1, 3)
++            q, k = self.norm_q(q).to(v.dtype), self.norm_k(k).to(v.dtype)
++
++            # (B, H, N_q, D) @ (B, H, D, N_kv) -> (B, H, N_q, N_kv)
++            attn = torch.matmul(q * self.scale, k.transpose(-2, -1))
++            attn = torch.softmax(attn, dim=-1)
++            attn = self.attn_drop(attn)
++            # (B, H, N_q, N_kv) @ (B, H, N_kv, D) -> (B, H, N_q, D)
++            x = torch.matmul(attn, v)
++            x = x.transpose(1, 2).reshape(B, N_q, C)
+ 
+         x = self.proj(x)
+         x = self.proj_drop(x)
+diff --git a/third_party_model/anysplat/src/model/encoder/heads/vggt_dpt_gs_head.py b/third_party_model/anysplat/src/model/encoder/heads/vggt_dpt_gs_head.py
+index 577a301..a59e7e1 100644
+--- a/third_party_model/anysplat/src/model/encoder/heads/vggt_dpt_gs_head.py
++++ b/third_party_model/anysplat/src/model/encoder/heads/vggt_dpt_gs_head.py
+@@ -127,6 +127,10 @@ class VGGT_DPT_GS_Head(DPTHead):
+         frames_start_idx: int = None,
+         frames_end_idx: int = None,
+     ):
++        # Head stays in fp32 for stability; cast inputs to match
++        encoder_tokens = [t.float() for t in encoder_tokens]
++        imgs = imgs.float()
++
+         if frames_start_idx is not None and frames_end_idx is not None:
+             imgs = imgs[:, frames_start_idx:frames_end_idx]
+ 
+diff --git a/utils/utils_for_thirdparty.py b/utils/utils_for_thirdparty.py
+index 379b62f..c77b892 100644
+--- a/utils/utils_for_thirdparty.py
++++ b/utils/utils_for_thirdparty.py
+@@ -53,13 +53,23 @@ def load_vae(args: argparse.Namespace, device: torch.device):
+ def cast_to_bfloat16(model: torch.nn.Module):
+     """
+     Cast the model's Conv2d and Linear layers to bfloat16, except for layers in 'head'.
++    Head layers stay in fp32 for stability; head inputs are cast to fp32 in forward.
+     """
++    from utils.lora_util.layers import Conv2d as ConvLoRA2d
++
+     with torch.no_grad():
+         for name, module in model.named_modules():
+-            # Keep heads in fp32 for stability; cast the rest to bfloat16 for speed/memory.
+             if "head" in str.lower(name):
+                 continue
+-            if isinstance(module, torch.nn.Conv2d):
++            if isinstance(module, ConvLoRA2d):
++                module.conv.weight.data = module.conv.weight.data.to(torch.bfloat16)
++                if module.conv.bias is not None:
++                    module.conv.bias.data = module.conv.bias.data.to(torch.bfloat16)
++                if hasattr(module, "lora_A") and module.lora_A is not None:
++                    module.lora_A.data = module.lora_A.data.to(torch.bfloat16)
++                if hasattr(module, "lora_B") and module.lora_B is not None:
++                    module.lora_B.data = module.lora_B.data.to(torch.bfloat16)
++            elif isinstance(module, torch.nn.Conv2d):
+                 module.weight.data = module.weight.data.to(torch.bfloat16)
+                 if module.bias is not None:
+                     module.bias.data = module.bias.data.to(torch.bfloat16)
+@@ -67,3 +77,7 @@ def cast_to_bfloat16(model: torch.nn.Module):
+                 module.weight.data = module.weight.data.to(torch.bfloat16)
+                 if module.bias is not None:
+                     module.bias.data = module.bias.data.to(torch.bfloat16)
++                if hasattr(module, "lora_A") and module.lora_A is not None:
++                    module.lora_A.data = module.lora_A.data.to(torch.bfloat16)
++                if hasattr(module, "lora_B") and module.lora_B is not None:
++                    module.lora_B.data = module.lora_B.data.to(torch.bfloat16)
