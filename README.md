@@ -1,5 +1,5 @@
 <div align="center">
-<h1>UniVEdit: Unified Visual Editing across Images, Videos, and 3D Scenes</h1>
+<h1>VitronEdit: Universal Visual Editing across Images, Videos, and 3D Scenes</h1>
 <p>
   Jing Wang<sup>1</sup> &nbsp;&nbsp; Yanlin Li<sup>1</sup> &nbsp;&nbsp; Mong-Li Lee<sup>1</sup> &nbsp;&nbsp; Wynne Hsu<sup>1</sup> &nbsp;&nbsp; Shengqiong Wu<sup>2</sup> &nbsp;&nbsp; Hao Fei<sup>2</sup>
 </p>
