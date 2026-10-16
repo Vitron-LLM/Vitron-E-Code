@@ -51,7 +51,7 @@ from hyvideo.pipelines.hunyuan_video_pipeline import HunyuanVideo_1_5_Pipeline
 from hyvideo.commons.parallel_states import get_parallel_state, initialize_parallel_state
 from hyvideo.optim.muon import get_muon_optimizer
 from hyvideo.utils.data_utils import resize_and_center_crop
-from univedit.data.config import get_dataset_spec, load_data_config, sampling_probabilities
+from univedit.data.config import GROUP_TASKS, get_dataset_spec, list_datasets, load_data_config, sampling_probabilities
 from univedit.data.datasets import EditSample
 from univedit.data.preprocessing import IMAGE_CLIP_FRAMES
 from univedit.tokens import SPECIAL_TOKENS, SUPPORTED_TASKS, get_special_token_from_task
@@ -1495,7 +1495,9 @@ class HunyuanVideoTrainer:
         return [[frames[0]] for frames in source_sequences]
 
     def _check_image_clip(self, batch: Dict[str, Any], task_type: str) -> None:
-        """Raise unless an i2i / ti_i2i batch holds clips of ``IMAGE_CLIP_FRAMES`` frames (or their latents)."""
+        """Raise unless an i2i / ti_i2i batch holds clips of ``IMAGE_CLIP_FRAMES`` frames (or their latents).
+        With ``source_sequence_latents`` the source frames only feed the text and vision encoders
+        (frame 0), so any number of them is accepted."""
         latent_frames = (IMAGE_CLIP_FRAMES - 1) // 4 + 1
         for key, frames in (
             ("target_pixels", IMAGE_CLIP_FRAMES),
@@ -1509,7 +1511,7 @@ class HunyuanVideoTrainer:
                     f"got shape {tuple(value.shape)}."
                 )
         source_sequences = batch.get("source_sequence", None)
-        if source_sequences is not None:
+        if source_sequences is not None and not isinstance(batch.get("source_sequence_latents"), torch.Tensor):
             for bi, frames in enumerate(normalize_batched_pil_sequences(source_sequences, len(batch["text"]), "source_sequence")):
                 if len(frames) != IMAGE_CLIP_FRAMES:
                     raise ValueError(
@@ -2502,6 +2504,17 @@ def main(trainer_cls: Optional[type] = None, argv: Optional[List[str]] = None) -
     prob_dict = sampling_probabilities()
     if not prob_dict:
         parser.error("--data_config is required.")
+    known_names = set(GROUP_TASKS) | set(list_datasets())
+    for option, values in (
+        ("--dataloader_batch_sizes", config.dataloader_batch_sizes),
+        ("--dataloader_gradient_accumulation_steps", config.dataloader_gradient_accumulation_steps),
+    ):
+        unknown = sorted(set(values) - known_names)
+        if unknown:
+            parser.error(
+                f"{option}: {unknown} are neither data-config groups {sorted(GROUP_TASKS)} "
+                f"nor datasets of --data_config {list_datasets()}."
+            )
     resolve_dataset_seed_offset(config)
 
     trainer = trainer_cls(config, **trainer_cls.trainer_kwargs_from_args(args))

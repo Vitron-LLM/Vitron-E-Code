@@ -9,44 +9,45 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 import yaml
 
-from univedit.data.datasets import FORMATS, EditDataset
+from univedit.data.datasets import DEFAULT_KEYS, FORMATS, EditDataset
 from univedit.data.preprocessing import CLIP_SAMPLING_MODES, FrameSampling, num_frames_for_views
 from univedit.data.sources import Location
 from univedit.tokens import SUPPORTED_TASKS
 
-SAMPLE_FIELDS = ("source", "target", "reference", "text")
+SAMPLE_FIELDS = tuple(DEFAULT_KEYS) + ("text",)
 
 # Top-level groups of a data config and the tasks of their datasets.
 GROUP_TASKS = {"image": ("i2i", "ti_i2i"), "video": ("v2v", "tiv2v"), "3d": ("3d23d",)}
 
 # Options a group may set as defaults for its datasets, and the per-dataset ones.
-_SHARED_OPTIONS = {"batch_size", "gradient_accumulation_steps", "shuffle_buffer"}
 _GROUP_OPTIONS = {"image": set(), "video": {"num_frames", "frame_sampling"}, "3d": {"num_views", "view_window"}}
 _DATASET_OPTIONS = {"task", "path", "prob", "format", "shards", "keys"}
 
 DEFAULT_NUM_FRAMES = 65
 DEFAULT_FRAME_SAMPLING = "random_clip"
 DEFAULT_NUM_VIEWS = 26
-# Decoded samples held by the shuffle buffer.
-DEFAULT_SHUFFLE_BUFFER = {"image": 150, "video": 50, "3d": 50}
+# Decoded samples held by the shuffle buffer of a dataset, per group.
+SHUFFLE_BUFFER = {"image": 150, "video": 50, "3d": 50}
 
 DatasetFactory = Callable[..., torch.utils.data.Dataset]
 
 
 @dataclass(frozen=True)
 class DatasetSpec:
-    """A configured dataset: its task, how to build it, its sampling weight and
-    its batch settings (None = the trainer's default)."""
+    """A configured dataset: its task, how to build it and its sampling weight."""
 
     name: str
     task: str
     factory: DatasetFactory
     prob: float = 1.0
-    batch_size: Optional[int] = None
-    gradient_accumulation_steps: Optional[int] = None
 
 
 _DATASETS: Dict[str, DatasetSpec] = {}
+
+
+def group_of_task(task: str) -> str:
+    """The data-config group (image / video / 3d) of a task."""
+    return next(group for group, tasks in GROUP_TASKS.items() if task in tasks)
 
 
 def register_dataset(
@@ -55,14 +56,12 @@ def register_dataset(
     factory: DatasetFactory,
     *,
     prob: float = 1.0,
-    batch_size: Optional[int] = None,
-    gradient_accumulation_steps: Optional[int] = None,
 ) -> None:
     """Add ``factory(*, config, batch_size, seed) -> IterableDataset`` to the
     table under ``name``, replacing a dataset of that name."""
     if task not in SUPPORTED_TASKS:
         raise ValueError(f"Unknown task '{task}' for dataset '{name}'. Expected one of {SUPPORTED_TASKS}.")
-    _DATASETS[name] = DatasetSpec(name, task, factory, prob, batch_size, gradient_accumulation_steps)
+    _DATASETS[name] = DatasetSpec(name, task, factory, prob)
 
 
 def get_dataset_spec(name: str) -> DatasetSpec:
@@ -96,11 +95,8 @@ class DatasetEntry:
     prob: float
     format: str
     shards: Optional[str]
-    shuffle_buffer: int
     keys: Dict[str, str]
     sampling: Optional[FrameSampling]
-    batch_size: Optional[int]
-    gradient_accumulation_steps: Optional[int]
 
 
 def _fail(name: str, message: str):
@@ -168,11 +164,8 @@ def _parse_entry(name: str, group: str, options: Dict[str, Any]) -> DatasetEntry
         prob=float(prob),
         format=data_format,
         shards=shards,
-        shuffle_buffer=_integer(name, options, "shuffle_buffer", 0, DEFAULT_SHUFFLE_BUFFER[group]),
         keys=dict(keys),
         sampling=sampling,
-        batch_size=_integer(name, options, "batch_size", 1),
-        gradient_accumulation_steps=_integer(name, options, "gradient_accumulation_steps", 1),
     )
 
 
@@ -185,12 +178,10 @@ def read_data_config(path: str) -> List[DatasetEntry]:
         raise ValueError(f"Data config '{path}': the top-level keys must be among {tuple(GROUP_TASKS)}.")
     entries: Dict[str, DatasetEntry] = {}
     for group, section in content.items():
-        defaults_allowed = _SHARED_OPTIONS | _GROUP_OPTIONS[group]
+        defaults_allowed = _GROUP_OPTIONS[group]
         if not isinstance(section, dict) or not set(section) <= defaults_allowed | {"datasets"}:
-            raise ValueError(
-                f"Data config '{path}', group '{group}': expected 'datasets' and optional defaults "
-                f"among {sorted(defaults_allowed)}."
-            )
+            expected = f"optional defaults among {sorted(defaults_allowed)}" if defaults_allowed else "no other option"
+            raise ValueError(f"Data config '{path}', group '{group}': expected 'datasets' and {expected}.")
         datasets = section.get("datasets") or {}
         if not isinstance(datasets, dict):
             raise ValueError(f"Data config '{path}', group '{group}': 'datasets' must map dataset names to their options.")
@@ -220,7 +211,7 @@ def build_dataset(entry: DatasetEntry, *, batch_size: int, seed: int) -> EditDat
         shards=entry.shards,
         keys=entry.keys,
         sampling=entry.sampling,
-        shuffle_buffer=entry.shuffle_buffer,
+        shuffle_buffer=SHUFFLE_BUFFER[group_of_task(entry.task)],
         batch_size=batch_size,
         seed=seed,
         name=entry.name,
@@ -235,11 +226,4 @@ def load_data_config(path: str) -> None:
         def factory(*, config, batch_size, seed, entry=entry):
             return build_dataset(entry, batch_size=batch_size, seed=seed)
 
-        register_dataset(
-            entry.name,
-            entry.task,
-            factory,
-            prob=entry.prob,
-            batch_size=entry.batch_size,
-            gradient_accumulation_steps=entry.gradient_accumulation_steps,
-        )
+        register_dataset(entry.name, entry.task, factory, prob=entry.prob)

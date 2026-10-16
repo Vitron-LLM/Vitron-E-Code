@@ -1,11 +1,7 @@
-# Example data config for geometry post-training (scripts/train/geo_posttrain.sh).
-# Copy it and set the paths. The keys are those of data.example.yaml; the values
-# are the ones of our run: smaller batches, the same gradient accumulation for
-# every group, 3D samples of 17 views and a larger share of 3D data.
+# Example data config for geometry post-training with the task mix of our run;
+# the options are described in the README ("2.1 Data").
 
 image:
-  batch_size: 4                      # per GPU
-  gradient_accumulation_steps: 4
   datasets:
     my_i2i:
       task: i2i
@@ -17,8 +13,6 @@ image:
       prob: 0.15
 
 video:
-  batch_size: 1
-  gradient_accumulation_steps: 4
   num_frames: 65
   datasets:
     my_v2v:
@@ -31,9 +25,7 @@ video:
       prob: 0.15
 
 3d:
-  batch_size: 1
-  gradient_accumulation_steps: 4
-  num_views: 17                      # 65 frames
+  num_views: 17
   datasets:
     my_3d:
       path: /path/to/my_3d

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import random
+import re
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, TypedDict
 
 import numpy as np
@@ -12,7 +14,14 @@ import PIL.Image
 import torch
 from loguru import logger
 
-from univedit.data.preprocessing import FrameSampling, build_image_sample, build_video_sample
+from univedit.data.preprocessing import (
+    IMAGE_BUCKETS,
+    FrameSampling,
+    build_image_sample,
+    build_video_sample,
+    resize_and_center_crop_image,
+    resize_and_pad_image,
+)
 from univedit.data.sources import (
     IMAGE_EXTENSIONS,
     SHARD_BUILDERS,
@@ -28,9 +37,21 @@ IMAGE_TASKS = ("i2i", "ti_i2i")
 REFERENCE_TASKS = ("ti_i2i", "tiv2v")
 MANIFEST_FILE = "metadata.jsonl"
 FORMATS = ("jsonl",) + tuple(SHARD_BUILDERS)
+ARRAY_EXTENSIONS = ("npy",)
 
-# Default names of the sample fields in a row.
-DEFAULT_KEYS = {"source": "source", "target": "target", "reference": "reference"}
+# Default names of the sample fields in a row. The latent fields hold VAE
+# latents of the videos; ``source_frames`` names the numbered source frames
+# ``<name>_<i>.<ext>`` given to the text encoder.
+DEFAULT_KEYS = {
+    "source": "source",
+    "target": "target",
+    "reference": "reference",
+    "target_latent": "target_latent",
+    "source_latent": "source_latent",
+    "reference_latent": "reference_latent",
+    "source_frames": "source_frame",
+    "source_first_frame": "source_first_frame",
+}
 DEFAULT_TEXT_KEYS = ("txt", "text", "json.text")
 
 
@@ -92,15 +113,19 @@ def shuffle_buffer(samples: Iterable, buffer_size: int, seed: int) -> Iterator:
     yield from buffer
 
 
+def _tensor_shapes(sample: dict) -> tuple:
+    return tuple((key, tuple(value.shape)) for key, value in sorted(sample.items()) if isinstance(value, torch.Tensor))
+
+
 def iter_bucketed_samples(samples: Iterable[dict], batch_size: int, skip_log: Optional[_SkipLog] = None) -> Iterator[dict]:
-    """Regroup a stream so every run of ``batch_size`` samples shares one
-    ``target_pixels`` shape. Samples left in a bucket when the stream ends are dropped."""
+    """Regroup a stream so every run of ``batch_size`` samples has the same
+    tensor fields with the same shapes. Samples left in a bucket when the stream ends are dropped."""
     if batch_size <= 1:
         yield from samples
         return
     buckets: Dict[tuple, List[dict]] = {}
     for sample in samples:
-        bucket = buckets.setdefault(tuple(sample["target_pixels"].shape), [])
+        bucket = buckets.setdefault(_tensor_shapes(sample), [])
         bucket.append(sample)
         if len(bucket) >= batch_size:
             yield from bucket
@@ -241,14 +266,44 @@ class EditDataset(torch.utils.data.IterableDataset):
 
     # ---- row -> sample ----
 
-    def _media(self, row: dict, field: str, extensions) -> Any:
-        """Value of the field ``<name>``, or ``<name>.<ext>`` as tar members are named."""
+    def _find(self, row: dict, field: str, extensions) -> Any:
+        """Value of the field ``<name>``, or ``<name>.<ext>`` as tar members are named; None when missing."""
         name = self.keys[field]
         for candidate in (name, *(f"{name}.{extension}" for extension in extensions)):
             value = _lookup(row, candidate)
             if value is not None:
                 return value
-        raise KeyError(f"no '{name}' field for {field}; the row has {_fields(row)}")
+        return None
+
+    def _media(self, row: dict, field: str, extensions) -> Any:
+        value = self._find(row, field, extensions)
+        if value is None:
+            raise KeyError(f"no '{self.keys[field]}' field for {field}; the row has {_fields(row)}")
+        return value
+
+    def _numbered(self, row: dict, field: str, extensions) -> List[Any]:
+        """Values of the fields ``<name>_<i>.<ext>``, by ``i``."""
+        name = self.keys[field]
+        pattern = re.compile(rf"{re.escape(name)}_(\d+)\.(?:{'|'.join(extensions)})")
+        numbered = sorted(
+            (int(match.group(1)), key) for key in row if (match := pattern.fullmatch(key)) and row[key] is not None
+        )
+        if not numbered:
+            raise KeyError(f"no '{name}_<i>' fields for {field}; the row has {_fields(row)}")
+        return [row[key] for _, key in numbered]
+
+    def _array(self, value, dtype) -> np.ndarray:
+        """Array from a ``.npy`` path below the root (str), ``.npy`` bytes or nested lists."""
+        if isinstance(value, str):
+            value = self.location.read_bytes(value)
+        if isinstance(value, dict) and "bytes" in value:
+            value = value["bytes"]
+        if isinstance(value, (bytes, bytearray)):
+            value = np.load(io.BytesIO(value), allow_pickle=False)
+        return np.asarray(value, dtype=dtype)
+
+    def _latent(self, value) -> torch.Tensor:
+        return torch.from_numpy(self._array(value, np.float16))
 
     def _text(self, row: dict) -> str:
         """Instruction text from the configured field, or from the usual ones."""
@@ -267,7 +322,46 @@ class EditDataset(torch.utils.data.IterableDataset):
         """Frame sequence from a path below the root (str) or from an encoded value."""
         return self.location.open_frames(value) if isinstance(value, str) else open_video(value)
 
+    def _build_latent_sample(self, row: dict) -> EditSample:
+        """Sample of a row that holds the VAE latents of its target and source clips, with the
+        inputs of the text and vision encoders: for an image task the source image as a
+        one-frame ``source_sequence`` (and the reference), sized to the bucket of the latents as
+        in an image sample; for a video / 3D task the source frames and first frame."""
+        sample: EditSample = {
+            "text": self._text(row),
+            "target_latents": self._latent(self._media(row, "target_latent", ARRAY_EXTENSIONS)),
+            "source_sequence_latents": self._latent(self._media(row, "source_latent", ARRAY_EXTENSIONS)),
+        }
+        if sample["source_sequence_latents"].shape != sample["target_latents"].shape:
+            raise ValueError(
+                f"source latents {tuple(sample['source_sequence_latents'].shape)} and target latents "
+                f"{tuple(sample['target_latents'].shape)} differ in shape."
+            )
+        if self.task in IMAGE_TASKS:
+            height, width = _image_bucket_of(sample["target_latents"])
+            source = self._image(self._media(row, "source", IMAGE_EXTENSIONS))
+            sample["source_sequence"] = [resize_and_center_crop_image(source, height, width)]
+            if self.task in REFERENCE_TASKS:
+                reference = self._image(self._media(row, "reference", IMAGE_EXTENSIONS))
+                sample["reference_image"] = resize_and_pad_image(reference, height, width)
+        else:
+            sample["source_sampled_frames"] = [
+                self._image(value) for value in self._numbered(row, "source_frames", IMAGE_EXTENSIONS)
+            ]
+            sample["source_first_frame"] = self._array(
+                self._media(row, "source_first_frame", ARRAY_EXTENSIONS), np.uint8
+            )
+            if self.task in REFERENCE_TASKS:
+                sample["reference_image"] = self._image(self._media(row, "reference", IMAGE_EXTENSIONS))
+        if self.task in REFERENCE_TASKS:
+            reference_latent = self._find(row, "reference_latent", ARRAY_EXTENSIONS)
+            if reference_latent is not None:
+                sample["reference_image_latents"] = self._latent(reference_latent)
+        return sample
+
     def _build_sample(self, row: dict, rng: random.Random) -> EditSample:
+        if self._find(row, "target_latent", ARRAY_EXTENSIONS) is not None:
+            return self._build_latent_sample(row)
         text = self._text(row)
         reference = None
         if self.task in REFERENCE_TASKS:
@@ -298,6 +392,15 @@ class EditDataset(torch.utils.data.IterableDataset):
     def __iter__(self) -> Iterator[EditSample]:
         shuffled = shuffle_buffer(self._iter_samples(), self.shuffle_buffer, self.seed)
         return iter_bucketed_samples(shuffled, self.batch_size, self._skip_log)
+
+
+def _image_bucket_of(latents: torch.Tensor) -> tuple:
+    """The image bucket ``(height, width)`` whose shape the latents ``[C, F, h, w]`` have."""
+    latent_height, latent_width = latents.shape[-2:]
+    for height, width in IMAGE_BUCKETS:
+        if height * latent_width == width * latent_height and height % latent_height == 0:
+            return height, width
+    raise ValueError(f"latents of spatial size {latent_height}x{latent_width} match no image bucket {IMAGE_BUCKETS}.")
 
 
 def _lookup(row: dict, name: str) -> Any:

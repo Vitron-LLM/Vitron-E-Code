@@ -24,6 +24,8 @@ torchrun --standalone --nproc_per_node 8 -m univedit.training.trainer \
     --pretrained_model_root "$MODEL_PATH" \
     --data_config "$DATA_CONFIG" \
     --output_dir "$OUTPUT_DIR" \
+    --dataloader_batch_sizes "image:10,video:5,3d:3" \
+    --dataloader_gradient_accumulation_steps "image:6,video:3,3d:5" \
     --max_steps 10000 \
     --save_interval 100 \
     --log_interval 1 \

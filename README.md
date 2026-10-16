@@ -93,7 +93,11 @@ to also export 3D Gaussians for `3d23d`.
 
 ### 2.1 Data
 
-A dataset is a directory with a `metadata.jsonl` manifest and its media files:
+A dataset is a directory, local or in a Hugging Face dataset repo
+(`hf://datasets/<user>/<repo>[/<subdir>]`), in one of two forms.
+
+**Manifest**: a `metadata.jsonl` file with one sample per line, its paths
+relative to the directory:
 
 ```
 data/my_i2i/
@@ -106,39 +110,67 @@ data/my_i2i/
 {"source": "images/0001_source.jpg", "target": "images/0001_target.jpg", "text": "make the sky pink"}
 ```
 
-`source` and `target` are images for `i2i` / `ti_i2i` and videos for `v2v` /
-`tiv2v` / `3d23d`; `ti_i2i` and `tiv2v` samples also have a `reference` image.
-Tar shards (WebDataset layout) and parquet shards with the same fields are read
-too, from a local directory or a Hugging Face dataset repo
-(`hf://datasets/<user>/<repo>`).
+**Shards**: tar files in WebDataset layout, where the members `<key>.<field>` of
+one key form a sample (`0001.source.jpg`, `0001.target.jpg`, `0001.txt`), or
+parquet files with the same fields.
 
-The datasets are listed in a YAML data config, grouped by modality, with the
-batch settings of each group and the sampling weight (`prob`) of each dataset:
+`source` and `target` are images for `i2i` / `ti_i2i` and videos for `v2v` /
+`tiv2v` / `3d23d` (a video file, or in a manifest also a directory of frame
+images); `ti_i2i` and `tiv2v` samples also have a `reference` image.
+
+The datasets are listed in a YAML data config, grouped by modality (`image`,
+`video`, `3d`). The name of a dataset is shown in the training logs; every
+optimizer update samples one dataset with probability `prob` / (sum of all `prob`):
 
 ```yaml
 image:
-  batch_size: 10                     # per GPU
-  gradient_accumulation_steps: 6
   datasets:
     my_i2i:    {task: i2i,    path: data/my_i2i,    prob: 0.2}
     my_ti_i2i: {task: ti_i2i, path: data/my_ti_i2i, prob: 0.2}
 video:
-  batch_size: 5
-  gradient_accumulation_steps: 3
+  num_frames: 65
   datasets:
     my_v2v:    {task: v2v,   path: data/my_v2v,   prob: 0.2}
     my_tiv2v:  {task: tiv2v, path: data/my_tiv2v, prob: 0.2}
 3d:
-  batch_size: 3
-  gradient_accumulation_steps: 5
+  num_views: 26
   datasets:
     my_3d:     {path: data/my_3d, prob: 0.2}
 ```
 
-[configs/data.example.yaml](configs/data.example.yaml) is the config of multi-task
-fine-tuning with every option commented, and
-[configs/data.geo.example.yaml](configs/data.geo.example.yaml) the one of geometry
-post-training.
+Options set above `datasets` are defaults for the datasets of the group; a
+dataset may set its own value.
+
+| Option | Set for | Meaning |
+|---|---|---|
+| `task` | dataset | `i2i` / `ti_i2i` in `image`, `v2v` / `tiv2v` in `video`, `3d23d` in `3d` (the default there) |
+| `path` | dataset | Local directory or `hf://datasets/<user>/<repo>[/<subdir>]` |
+| `prob` | dataset | Sampling weight (default 1) |
+| `format` | dataset | Which form the directory holds. `auto` (default) decides from its files: a `metadata.jsonl` at the top of the directory is read as the manifest, unless `shards` is set; otherwise every tar file, or every parquet file, below the directory is read as shards (finding both is an error). `jsonl`, `tar` or `parquet` sets the form, e.g. to read the tar files of a directory that also has a `metadata.jsonl`. |
+| `shards` | dataset | Glob of the shard files below the directory (`*` within a directory, `**` across directories). Default: every file of the format, `**/*.tar` or `**/*.parquet`. |
+| `keys` | dataset | Field names of the dataset, needed only where they differ from the defaults: `source`, `target` and `reference` (also found with an extension, such as `source.jpg`), and `txt`, `text` or `json.text` for the instruction. A dotted name reads a field of a JSON entry, such as `json.edit_instruction`. |
+| `num_frames` | `video` | Frames per clip, 4n+1 (default 65) |
+| `frame_sampling` | `video` | Which `num_frames` frames are taken from a longer video: `random_clip` (default) or `center_clip`, consecutive frames at a random or the middle position; `first`, the first frames; `uniform`, frames spread over the whole video. A video of at most `num_frames` frames gives all its frames, padded with its last frame. |
+| `num_views` | `3d` | Views K per sample (default 26), read as 4(K-1)+1 frames: the first view once, every other view 4 times |
+| `view_window` | `3d` | How many consecutive frames of the source video the K views are taken from, evenly spaced, at a random position (a shorter video gives all its frames). It does not change the frames read per sample, only how far apart the views are, i.e. how much the camera moves between them. Default 4(K-1)+1: every 4th frame becomes a view. |
+
+For example, tar shards under `data/` whose members are `<key>.source.jpg`,
+`<key>.edited.jpg`, `<key>.ref.jpg` and `<key>.json` with the instruction under
+`text` (the source and the instruction match the defaults):
+
+```yaml
+    my_ti_i2i:
+      task: ti_i2i
+      path: hf://datasets/<user>/<repo>
+      format: tar
+      shards: "data/*.tar"
+      keys: {target: edited.jpg, reference: ref.jpg}
+```
+
+[configs/data.example.yaml](configs/data.example.yaml) and
+[configs/data.geo.example.yaml](configs/data.geo.example.yaml) hold the task mix
+of our two training stages: copy them to `configs/data.yaml` and
+`configs/data.geo.yaml` and set the paths.
 
 ### 2.2 Multi-task fine-tuning
 
@@ -149,8 +181,12 @@ OUTPUT_DIR=outputs/univedit_multitask \
 bash scripts/train/multitask.sh
 ```
 
-The script holds the settings of our run on 8 GPUs. Set
-`RESUME_FROM_CHECKPOINT=<checkpoint dir>` to continue a run.
+The script holds the settings of our run on 8 GPUs, among them the batch size and
+gradient accumulation of each group: `--dataloader_batch_sizes image:10,video:5,3d:3`
+and `--dataloader_gradient_accumulation_steps image:6,video:3,3d:5` (a dataset
+name in place of a group sets one dataset; datasets not listed use `--batch_size`
+and `--gradient_accumulation_steps`). Arguments after the script override these.
+Set `RESUME_FROM_CHECKPOINT=<checkpoint dir>` to continue a run.
 
 ### 2.3 Geometry post-training
 
@@ -166,7 +202,9 @@ bash scripts/train/geo_posttrain.sh
 ```
 
 This stage continues from a multi-task checkpoint with depth and camera-pose
-losses from the 3D decoder.
+losses from the 3D decoder. Its 3D samples have 17 views (65 frames), the frames
+that `--geo_extractor_max_frames 17 --geo_frame_stride 4` of the script pass to
+these losses; change `num_views` and the two arguments together.
 
 ## License
 

@@ -33,7 +33,7 @@ import torchvision.transforms as T
 from loguru import logger
 from PIL import Image
 
-from univedit.data.config import get_dataset_spec
+from univedit.data.config import get_dataset_spec, group_of_task
 from univedit.training.config import TrainingConfig
 
 
@@ -298,17 +298,27 @@ def build_multi_dataloader(
 # Per-dataset batch settings
 # ---------------------------------------------------------------------------
 
+def _per_dataset_value(values: Dict[str, int], loader_name: str, default: int) -> int:
+    """The value of a dataset in ``values`` by its name, else by its data-config group, else ``default``."""
+    if loader_name in values:
+        return values[loader_name]
+    return values.get(group_of_task(get_dataset_spec(loader_name).task), default)
+
+
 def batch_size_for_loader(config: TrainingConfig, loader_name: str) -> int:
-    """Per-GPU batch size of a dataset: its data-config value, else ``config.batch_size``."""
-    batch_size = get_dataset_spec(loader_name).batch_size
-    return config.batch_size if batch_size is None else batch_size
+    """Per-GPU batch size of a dataset: ``config.dataloader_batch_sizes`` for its name or
+    group, else ``config.batch_size``."""
+    return _per_dataset_value(config.dataloader_batch_sizes, loader_name, config.batch_size)
 
 
 def gradient_accumulation_steps_for_loader(config: TrainingConfig, loader_name: Optional[str]) -> int:
-    """Gradient-accumulation steps of a dataset: its data-config value, else
-    ``config.gradient_accumulation_steps``."""
-    steps = None if loader_name is None else get_dataset_spec(loader_name).gradient_accumulation_steps
-    return config.gradient_accumulation_steps if steps is None else steps
+    """Gradient-accumulation steps of a dataset: ``config.dataloader_gradient_accumulation_steps``
+    for its name or group, else ``config.gradient_accumulation_steps``."""
+    if loader_name is None:
+        return config.gradient_accumulation_steps
+    return _per_dataset_value(
+        config.dataloader_gradient_accumulation_steps, loader_name, config.gradient_accumulation_steps
+    )
 
 
 # ---------------------------------------------------------------------------

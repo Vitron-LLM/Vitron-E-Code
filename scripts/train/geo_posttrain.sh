@@ -36,6 +36,8 @@ torchrun --standalone --nproc_per_node 8 -m univedit.training.geometry_trainer \
     --pretrained_model_root "$MODEL_PATH" \
     --data_config "$DATA_CONFIG" \
     --output_dir "$OUTPUT_DIR" \
+    --dataloader_batch_sizes "image:4,video:1,3d:1" \
+    --dataloader_gradient_accumulation_steps "image:4,video:4,3d:4" \
     --max_steps 1000 \
     --save_interval 50 \
     --log_interval 1 \

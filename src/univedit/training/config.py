@@ -40,6 +40,17 @@ def str_to_bool(value: Any) -> bool:
     raise argparse.ArgumentTypeError(f"Boolean value expected, got: {value}")
 
 
+def per_dataset_values(value: str) -> Dict[str, int]:
+    """Parse ``name:int,name:int`` (names are data-config groups or dataset names); "" gives {}."""
+    values: Dict[str, int] = {}
+    for item in filter(None, (part.strip() for part in value.split(","))):
+        name, sep, number = item.rpartition(":")
+        if not sep or not name or not number.strip().isdigit() or int(number) < 1:
+            raise argparse.ArgumentTypeError(f"Expected name:positive_int, got '{item}' in '{value}'.")
+        values[name.strip()] = int(number)
+    return values
+
+
 class SNRType(str, Enum):
     """Timestep sampling strategy."""
 
@@ -89,6 +100,9 @@ class TrainingConfig:
     
     # Data configuration
     batch_size: int = 1
+    # {data-config group or dataset name: value}, over batch_size / gradient_accumulation_steps
+    dataloader_batch_sizes: Dict[str, int] = field(default_factory=dict)
+    dataloader_gradient_accumulation_steps: Dict[str, int] = field(default_factory=dict)
     prefetch_batches: int = 1
     data_ctrl_timeout_hours: float = 6.0  # Timeout of the data-readiness barrier
     nccl_timeout_minutes: float = 30.0  # Timeout of the main compute process group
@@ -150,7 +164,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_steps", type=int, default=10000, help="Maximum optimizer update steps")
     parser.add_argument("--warmup_steps", type=int, default=500, help="Warmup steps")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1,
-                        help="Gradient accumulation steps of the datasets that set none in the data config")
+                        help="Gradient accumulation steps of the datasets not set by --dataloader_gradient_accumulation_steps")
+    parser.add_argument("--dataloader_gradient_accumulation_steps", type=per_dataset_values, default={},
+                        help="Gradient accumulation steps per data-config group (image / video / 3d) or "
+                             "dataset name, e.g. image:6,video:3,3d:5; a dataset name takes precedence over its group.")
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Maximum gradient norm")
     parser.add_argument("--train_timestep_shift", type=float, default=3.0, help="Train Timestep shift")
     parser.add_argument("--sampling_timestep_shift", type=float, default=5.0,
@@ -162,7 +179,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     
     # Data parameters
     parser.add_argument("--batch_size", type=int, default=1,
-                        help="Per-GPU batch size of the datasets that set none in the data config")
+                        help="Per-GPU batch size of the datasets not set by --dataloader_batch_sizes")
+    parser.add_argument("--dataloader_batch_sizes", type=per_dataset_values, default={},
+                        help="Per-GPU batch size per data-config group (image / video / 3d) or dataset name, "
+                             "e.g. image:10,video:5,3d:3; a dataset name takes precedence over its group.")
     parser.add_argument("--prefetch_batches", type=int, default=1,
                         help="Batches each dataset's background thread reads ahead of training "
                              "(data is read and decoded in the main process); 0 disables the thread.")
@@ -354,8 +374,10 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        dataloader_gradient_accumulation_steps=args.dataloader_gradient_accumulation_steps,
         max_grad_norm=args.max_grad_norm,
         batch_size=args.batch_size,
+        dataloader_batch_sizes=args.dataloader_batch_sizes,
         prefetch_batches=args.prefetch_batches,
         data_ctrl_timeout_hours=args.data_ctrl_timeout_hours,
         nccl_timeout_minutes=args.nccl_timeout_minutes,
