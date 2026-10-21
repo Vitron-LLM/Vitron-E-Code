@@ -1,13 +1,13 @@
 <div align="center">
 <h1>VitronEdit: Universal Visual Editing across Images, Videos, and 3D Scenes</h1>
 <p>
-  Jing Wang<sup>1*</sup> &nbsp;&nbsp; Yanlin Li<sup>1*</sup> &nbsp;&nbsp; Mong-Li Lee<sup>1</sup> &nbsp;&nbsp; Wynne Hsu<sup>1</sup> &nbsp;&nbsp; Shengqiong Wu<sup>2†</sup> &nbsp;&nbsp; Hao Fei<sup>2†</sup>
+  Jing Wang<sup>1†</sup> &nbsp;&nbsp; Yanlin Li<sup>1†</sup> &nbsp;&nbsp; Mong-Li Lee<sup>1</sup> &nbsp;&nbsp; Wynne Hsu<sup>1</sup> &nbsp;&nbsp; Shengqiong Wu<sup>2*</sup> &nbsp;&nbsp; Hao Fei<sup>2*</sup>
 </p>
 <p>
   <sup>1</sup>National University of Singapore &nbsp;&nbsp; <sup>2</sup>University of Oxford
 </p>
 <p>
-  <sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>†</sup>Corresponding author
+  <sup>†</sup>Equal contribution &nbsp;&nbsp; <sup>*</sup>Corresponding author
 </p>
 </div>
 
