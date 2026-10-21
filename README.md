@@ -1,15 +1,18 @@
 <div align="center">
 <h1>VitronEdit: Universal Visual Editing across Images, Videos, and 3D Scenes</h1>
 <p>
-  Jing Wang<sup>1</sup> &nbsp;&nbsp; Yanlin Li<sup>1</sup> &nbsp;&nbsp; Mong-Li Lee<sup>1</sup> &nbsp;&nbsp; Wynne Hsu<sup>1</sup> &nbsp;&nbsp; Shengqiong Wu<sup>2</sup> &nbsp;&nbsp; Hao Fei<sup>2</sup>
+  Jing Wang<sup>1*</sup> &nbsp;&nbsp; Yanlin Li<sup>1*</sup> &nbsp;&nbsp; Mong-Li Lee<sup>1</sup> &nbsp;&nbsp; Wynne Hsu<sup>1</sup> &nbsp;&nbsp; Shengqiong Wu<sup>2†</sup> &nbsp;&nbsp; Hao Fei<sup>2†</sup>
 </p>
 <p>
   <sup>1</sup>National University of Singapore &nbsp;&nbsp; <sup>2</sup>University of Oxford
 </p>
+<p>
+  <sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>†</sup>Corresponding author
+</p>
 </div>
 
 <p align="center">
-  <a href=""><img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="Paper"></a>
+  <a href="https://arxiv.org/abs/2610.27049"><img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="Paper"></a>
   <!-- TODO: <a href=""><img src="https://img.shields.io/badge/Homepage-Project%20Page-blue" alt="Homepage"></a> -->
   <a href="https://huggingface.co/SanRiiiii/UniVEdit"><img src="https://img.shields.io/badge/Model-Hugging%20Face-yellow" alt="Model"></a>
   <a href="https://huggingface.co/datasets/SanRiiiii/UniVEdit_8k"><img src="https://img.shields.io/badge/Dataset-Hugging%20Face-yellow" alt="Dataset"></a>
@@ -29,7 +32,7 @@ UniVEdit is a unified editing model for five tasks:
 
 ## Visual Results
 
-![UniVEdit results](assets/results.png)
+![UniVEdit results](assets/intro.png)
 
 ## Installation
 
